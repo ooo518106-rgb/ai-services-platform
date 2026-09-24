@@ -1,6 +1,6 @@
 import os
 import uuid
-from fastapi import FastAPI, HTTPException, Query
+from fastapi import FastAPI, HTTPException, Query, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 from fastapi.responses import FileResponse
@@ -279,22 +279,15 @@ SERVICE_PRICING = {
 DISCOUNT_KEYWORDS = ["خصم", "غالي", "كثير", "كتير", "وايد", "راعينا", "نزل", "كم اخر", "أقل", "تخفيض", "ميزانية", "غالية"]
 AGREE_KEYWORDS = ["موافق", "تمام", "اتفقنا", "يلا", "اعتمد", "اوكي", "ماشي", "ممتاز", "تم", "شغال"]
 
-from pydantic import BaseModel
-
-class SalesChatRequest(BaseModel):
-    message: str
-    state: dict = None
-
-@app.post("/api/chat/sales")
-def api_sales_chat(req: SalesChatRequest):
-    state = req.state or {
+def process_sales_chat(user_message: str, current_state: dict = None) -> dict:
+    state = current_state or {
         "stage": "discovery",
         "service": None,
         "current_quote": 0,
         "negotiation_count": 0
     }
     
-    msg = req.message.strip()
+    msg = user_message.strip()
     msg_lower = msg.lower()
     
     # 1. Agreement
@@ -379,3 +372,58 @@ def api_sales_chat(req: SalesChatRequest):
         "ممكن توضح لي أكثر كم منتج عندك أو أي خدمة بالتحديد بتفضل (أوصاف، تصاميم، أم باقة كاملة) لأحسب لك التكلفة الدقيقة؟"
     )
     return {"success": True, "reply": reply, "state": state, "deal_closed": False}
+
+from pydantic import BaseModel
+
+class SalesChatRequest(BaseModel):
+    message: str
+    state: dict = None
+
+@app.post("/api/chat/sales")
+def api_sales_chat(req: SalesChatRequest):
+    return process_sales_chat(req.message, req.state)
+
+# ==================== WHATSAPP WEBHOOK (GREEN-API) ====================
+
+whatsapp_sessions = {}
+
+@app.post("/api/whatsapp/webhook")
+async def whatsapp_webhook(request: Request):
+    try:
+        body = await request.json()
+    except Exception:
+        return {"status": "error", "message": "Invalid JSON"}
+        
+    type_webhook = body.get("typeWebhook")
+    if type_webhook == "incomingMessageReceived":
+        message_data = body.get("messageData", {})
+        type_message = message_data.get("typeMessage")
+        
+        if type_message == "textMessage":
+            text = message_data.get("textMessageData", {}).get("textMessage", "").strip()
+            sender_data = body.get("senderData", {})
+            chat_id = sender_data.get("chatId")
+            
+            if not chat_id or "@c.us" not in chat_id:
+                return {"status": "ignored"}
+                
+            user_state = whatsapp_sessions.get(chat_id)
+            res = process_sales_chat(text, user_state)
+            whatsapp_sessions[chat_id] = res["state"]
+            
+            reply_text = res["reply"].replace("**", "")
+            if res.get("deal_closed"):
+                reply_text += "\n\n🔗 رابط منصتنا لتأكيد طلبك والدفع الآمن:\nhttps://ai-services-platform.onrender.com"
+                
+            id_instance = os.getenv("GREEN_API_ID", "")
+            api_token = os.getenv("GREEN_API_TOKEN", "")
+            
+            if id_instance and api_token:
+                import requests
+                send_url = f"https://api.green-api.com/waInstance{id_instance}/sendMessage/{api_token}"
+                try:
+                    requests.post(send_url, json={"chatId": chat_id, "message": reply_text}, timeout=10)
+                except Exception as e:
+                    print("Error sending WhatsApp message:", e)
+                    
+    return {"status": "ok"}
