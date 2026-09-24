@@ -240,3 +240,142 @@ def api_user_tasks(user_id: int = Query(...)):
 def api_user_transactions(user_id: int = Query(...)):
     transactions = get_user_transactions(user_id)
     return {"success": True, "transactions": transactions}
+
+# ==================== AI SALES & NEGOTIATION AGENT ====================
+
+SERVICE_PRICING = {
+    "product_descriptions": {
+        "title": "كتابة أوصاف منتجات لمتجر إلكتروني (20 منتج)",
+        "base_price": 25,
+        "floor_price": 15,
+        "keywords": ["وصف", "منتجات", "سلة", "زد", "محتوى", "شوبيفاي"]
+    },
+    "video_scripts": {
+        "title": "سكربتات إعلانية وتيك توك وريلز (5 سكربتات)",
+        "base_price": 20,
+        "floor_price": 12,
+        "keywords": ["سكربت", "فيديو", "تيك توك", "ريلز", "إعلان", "اعلانات"]
+    },
+    "store_badges": {
+        "title": "تصميم باقة شارات عروض وقوالب متجر كامل",
+        "base_price": 18,
+        "floor_price": 10,
+        "keywords": ["شارة", "شارات", "تصميم", "بانر", "قالب", "صور"]
+    },
+    "catalog_formatting": {
+        "title": "تنظيم وهيكلة كتالوج وبيانات المنتجات (CSV/Excel)",
+        "base_price": 22,
+        "floor_price": 14,
+        "keywords": ["كتالوج", "بيانات", "اكسل", "csv", "جدول", "تنظيم"]
+    },
+    "full_store_package": {
+        "title": "الباقة الذهبية المتكاملة للمتجر (أوصاف + شارات + سكربتات)",
+        "base_price": 50,
+        "floor_price": 35,
+        "keywords": ["باقة", "كامل", "كل", "شامل", "متكامل"]
+    }
+}
+
+DISCOUNT_KEYWORDS = ["خصم", "غالي", "كثير", "كتير", "وايد", "راعينا", "نزل", "كم اخر", "أقل", "تخفيض", "ميزانية", "غالية"]
+AGREE_KEYWORDS = ["موافق", "تمام", "اتفقنا", "يلا", "اعتمد", "اوكي", "ماشي", "ممتاز", "تم", "شغال"]
+
+from pydantic import BaseModel
+
+class SalesChatRequest(BaseModel):
+    message: str
+    state: dict = None
+
+@app.post("/api/chat/sales")
+def api_sales_chat(req: SalesChatRequest):
+    state = req.state or {
+        "stage": "discovery",
+        "service": None,
+        "current_quote": 0,
+        "negotiation_count": 0
+    }
+    
+    msg = req.message.strip()
+    msg_lower = msg.lower()
+    
+    # 1. Agreement
+    if state.get("current_quote") and any(kw in msg_lower for kw in AGREE_KEYWORDS):
+        state["stage"] = "agreed"
+        agreed_price = state["current_quote"]
+        deal_id = f"deal_{uuid.uuid4().hex[:8]}"
+        reply = (
+            f"ألف مبروك! تم الاتفاق على مبلغ **${agreed_price}** لـ {state.get('service_title', 'طلبكم المخصص')}. 🎉\n\n"
+            f"اضغط على زر الدفع بالأسفل لتأكيد حجز الخدمة وسنبدأ بالتنفيذ فوراً."
+        )
+        return {
+            "success": True,
+            "reply": reply,
+            "state": state,
+            "deal_closed": True,
+            "agreed_price": agreed_price,
+            "deal_id": deal_id
+        }
+
+    # 2. Bargaining / Discount request
+    if state.get("current_quote") and any(kw in msg_lower for kw in DISCOUNT_KEYWORDS):
+        state["negotiation_count"] = state.get("negotiation_count", 0) + 1
+        service_data = SERVICE_PRICING.get(state["service"])
+        floor = service_data["floor_price"] if service_data else 15
+        current = state["current_quote"]
+        
+        if current > floor:
+            new_quote = max(floor, round(current * 0.8))
+            state["current_quote"] = new_quote
+            state["stage"] = "negotiating"
+            reply = (
+                f"ولا يهمك يا غالي! تقديراً لاهتمامك ورغبتنا نبدأ تعامل طيب معك، أقدر أعمل لك خصم خاص وتكون التكلفة **${new_quote}** فقط بدلاً من ${current}. 🤝\n\n"
+                f"هل السعر هيك مناسبك لنعتمد الطلب؟"
+            )
+        else:
+            reply = (
+                f"والله يا غالي السعر **${current}** هو الحد النهائي وأقل تكلفة ممكنة لأعلى جودة وتنفيذ فوري مع ضمان الرضا الكامل. ✨\n\n"
+                f"إذا حابب نتوكل على الله ونعتمد؟"
+            )
+        return {"success": True, "reply": reply, "state": state, "deal_closed": False}
+
+    # 3. Service detection
+    detected_svc = None
+    for s_key, data in SERVICE_PRICING.items():
+        if any(kw in msg_lower for kw in data["keywords"]):
+            detected_svc = s_key
+            break
+            
+    if detected_svc or (not state.get("service") and "سعر" in msg_lower):
+        svc_key = detected_svc or "full_store_package"
+        data = SERVICE_PRICING[svc_key]
+        state["service"] = svc_key
+        state["service_title"] = data["title"]
+        state["current_quote"] = data["base_price"]
+        state["stage"] = "quoted"
+        
+        reply = (
+            f"أهلاً بك! بخصوص **{data['title']}**:\n"
+            f"السعر الأساسي المعتمد هو **${data['base_price']}** مع تسليم فوري وتنسيق احترافي جاهز لمتجرك.\n\n"
+            f"شو رأيك نبدأ، أو حابب نعدل في تفاصيل وحجم الطلب؟"
+        )
+        return {"success": True, "reply": reply, "state": state, "deal_closed": False}
+
+    # 4. Greetings
+    greetings = ["مرحبا", "سلام", "السلام", "الو", "مساء", "صباح", "يعطيك", "هلا", "مرحب"]
+    if any(g in msg_lower for g in greetings) or len(msg.split()) <= 2:
+        reply = (
+            "وعليكم السلام ورحمة الله! أهلاً بك في منصة وكيل الخدمات الرقمية. 🤝\n\n"
+            "أنا المساعد الذكي للمبيعات وتجهيز المتاجر، بنقدم:\n"
+            "• كتابة أوصاف تسويقية للمنتجات (سلة / زد)\n"
+            "• سكربتات إعلانات تيك توك وريلز\n"
+            "• شارات وقوالب تصميم العروض\n"
+            "• تنظيم وهيكلة كتالوجات المنتجات\n\n"
+            "خبرني شو الخدمة اللي محتاجها لمتجرك لأعطيك أفضل عرض وسعر؟"
+        )
+        return {"success": True, "reply": reply, "state": state, "deal_closed": False}
+
+    # Fallback
+    reply = (
+        "فهمت عليك تماماً! نقدر نجهز لك طلبك بأعلى جودة. "
+        "ممكن توضح لي أكثر كم منتج عندك أو أي خدمة بالتحديد بتفضل (أوصاف، تصاميم، أم باقة كاملة) لأحسب لك التكلفة الدقيقة؟"
+    )
+    return {"success": True, "reply": reply, "state": state, "deal_closed": False}

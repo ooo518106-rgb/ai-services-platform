@@ -82,6 +82,119 @@
         .toast { position: fixed; bottom: 20px; left: 20px; background: #1e293b; color: white; padding: 1rem 1.5rem; border-radius: 0.5rem; box-shadow: 0 10px 15px -3px rgba(0,0,0,0.1); z-index: 200; display: none; }
         .toast.success { background: #065f46; }
         .toast.error { background: #991b1b; }
+    
+        /* Floating Chat Widget */
+        .chat-toggle-btn {
+            position: fixed;
+            bottom: 25px;
+            left: 25px;
+            background: linear-gradient(135deg, #2563eb, #1d4ed8);
+            color: white;
+            padding: 0.9rem 1.4rem;
+            border-radius: 9999px;
+            font-weight: 700;
+            box-shadow: 0 10px 25px -5px rgba(37,99,235,0.4);
+            cursor: pointer;
+            border: none;
+            display: flex;
+            align-items: center;
+            gap: 0.6rem;
+            z-index: 90;
+            transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+        }
+        .chat-toggle-btn:hover {
+            transform: translateY(-3px) scale(1.02);
+            box-shadow: 0 15px 30px -5px rgba(37,99,235,0.5);
+        }
+        .chat-window {
+            position: fixed;
+            bottom: 90px;
+            left: 25px;
+            width: 380px;
+            height: 520px;
+            background: white;
+            border-radius: 1.25rem;
+            box-shadow: 0 20px 40px -10px rgba(0,0,0,0.2);
+            border: 1px solid var(--border);
+            display: none;
+            flex-direction: column;
+            z-index: 95;
+            overflow: hidden;
+            animation: slideUp 0.3s ease-out;
+        }
+        .chat-window.active { display: flex; }
+        @keyframes slideUp {
+            from { opacity: 0; transform: translateY(20px); }
+            to { opacity: 1; transform: translateY(0); }
+        }
+        .chat-header {
+            background: #1e293b;
+            color: white;
+            padding: 1.2rem;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
+        .chat-messages {
+            flex: 1;
+            padding: 1.2rem;
+            overflow-y: auto;
+            display: flex;
+            flex-direction: column;
+            gap: 0.85rem;
+            background: #f8fafc;
+        }
+        .msg {
+            max-width: 82%;
+            padding: 0.75rem 1rem;
+            border-radius: 1rem;
+            font-size: 0.95rem;
+            line-height: 1.5;
+            word-wrap: break-word;
+        }
+        .msg-bot {
+            background: white;
+            color: #0f172a;
+            align-self: flex-start;
+            border: 1px solid #e2e8f0;
+            border-bottom-right-radius: 0.25rem;
+        }
+        .msg-user {
+            background: var(--primary);
+            color: white;
+            align-self: flex-end;
+            border-bottom-left-radius: 0.25rem;
+        }
+        .chat-input-bar {
+            padding: 0.85rem;
+            background: white;
+            border-top: 1px solid var(--border);
+            display: flex;
+            gap: 0.5rem;
+        }
+        .chat-input-bar input {
+            flex: 1;
+            padding: 0.65rem 1rem;
+            border: 1px solid var(--border);
+            border-radius: 9999px;
+            font-size: 0.95rem;
+            outline: none;
+        }
+        .deal-btn {
+            background: #10b981;
+            color: white;
+            padding: 0.75rem;
+            border-radius: 0.5rem;
+            font-weight: 700;
+            text-align: center;
+            margin-top: 0.5rem;
+            cursor: pointer;
+            border: none;
+            width: 100%;
+            transition: all 0.2s;
+        }
+        .deal-btn:hover { background: #059669; }
+
     </style>
 </head>
 <body>
@@ -657,6 +770,116 @@ ${data.result.changes_applied.join(", ")}`;
         }
 
         window.onload = initApp;
+    
+        let salesChatState = null;
+
+        function toggleSalesChat() {
+            const win = document.getElementById("salesChatWindow");
+            win.classList.toggle("active");
+            if (win.classList.contains("active")) {
+                document.getElementById("salesChatInput").focus();
+            }
+        }
+
+        function handleSalesChatKey(e) {
+            if (e.key === "Enter") {
+                sendSalesMessage();
+            }
+        }
+
+        async function sendSalesMessage() {
+            const input = document.getElementById("salesChatInput");
+            const msg = input.value.trim();
+            if (!msg) return;
+
+            const box = document.getElementById("chatMessages");
+            
+            // Append User message
+            const userMsgDiv = document.createElement("div");
+            userMsgDiv.className = "msg msg-user";
+            userMsgDiv.innerText = msg;
+            box.appendChild(userMsgDiv);
+            input.value = "";
+            box.scrollTop = box.scrollHeight;
+
+            // Typing indicator
+            const typingDiv = document.createElement("div");
+            typingDiv.className = "msg msg-bot";
+            typingDiv.id = "typingIndicator";
+            typingDiv.innerText = "⏳ جاري الرد والتفاوض...";
+            box.appendChild(typingDiv);
+            box.scrollTop = box.scrollHeight;
+
+            try {
+                let res = await fetch("/api/chat/sales", {
+                    method: "POST",
+                    headers: { "Content-Type": "application/json" },
+                    body: JSON.stringify({ message: msg, state: salesChatState })
+                });
+                let data = await res.json();
+                
+                typingDiv.remove();
+
+                if (data.success) {
+                    salesChatState = data.state;
+                    
+                    const botMsgDiv = document.createElement("div");
+                    botMsgDiv.className = "msg msg-bot";
+                    botMsgDiv.innerHTML = data.reply.replace(/\n/g, "<br>").replace(/\*\*(.*?)\*\*/g, "<strong>$1</strong>");
+                    
+                    if (data.deal_closed) {
+                        const dealBtn = document.createElement("button");
+                        dealBtn.className = "deal-btn";
+                        dealBtn.innerText = `💳 تأكيد الحجز وإتمام الدفع ($${data.agreed_price})`;
+                        dealBtn.onclick = function() {
+                            simulatePurchase("growth");
+                            toggleSalesChat();
+                            showToast(`تم اعتماد الاتفاق بمبلغ $${data.agreed_price}! شكراً لتعاملك.`);
+                        };
+                        botMsgDiv.appendChild(dealBtn);
+                    }
+
+                    box.appendChild(botMsgDiv);
+                    box.scrollTop = box.scrollHeight;
+                }
+            } catch (err) {
+                typingDiv.innerText = "حدث خطأ بالاتصال، يرجى المحاولة ثانية.";
+            }
+        }
+
     </script>
+
+    <!-- Floating Sales Chat Widget -->
+    <button class="chat-toggle-btn" onclick="toggleSalesChat()">
+        <span>💬</span>
+        <span>تحدث وتفاوض على السعر</span>
+    </button>
+
+    <div id="salesChatWindow" class="chat-window">
+        <div class="chat-header">
+            <div style="display: flex; align-items: center; gap: 0.6rem;">
+                <div style="width: 10px; height: 10px; background: #10b981; border-radius: 9999px;"></div>
+                <div>
+                    <h4 style="font-size: 1rem; font-weight: 700;">مساعد المبيعات والتفاوض الذكي</h4>
+                    <p style="font-size: 0.75rem; color: #94a3b8;">متصل الآن • تفاوض واحصل على أفضل سعر</p>
+                </div>
+            </div>
+            <button onclick="toggleSalesChat()" style="background: none; border: none; color: #94a3b8; font-size: 1.25rem; cursor: pointer;">✕</button>
+        </div>
+
+        <div id="chatMessages" class="chat-messages">
+            <div class="msg msg-bot">
+                مرحباً بك! 👋 أنا مساعد المبيعات الذكي للمنصة.
+                <br><br>
+                خبرني شو الخدمة اللي محتاجها لمتجرك اليوم (أوصاف منتجات، شارات، سكربتات تيك توك، أو باقة كاملة) لأعطيك أفضل عرض وسعر؟
+            </div>
+        </div>
+
+        <div class="chat-input-bar">
+            <input type="text" id="salesChatInput" placeholder="اكتب طلبك أو فاصل على السعر..." onkeypress="handleSalesChatKey(event)">
+            <button class="btn btn-primary" style="padding: 0.5rem 1rem; border-radius: 9999px;" onclick="sendSalesMessage()">إرسال</button>
+        </div>
+    </div>
+
 </body>
 </html>

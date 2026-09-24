@@ -4,8 +4,7 @@ import hashlib
 import json
 from datetime import datetime
 
-DB_DIR = os.getenv('DB_DIR', os.path.dirname(__file__))
-DB_PATH = os.path.join(DB_DIR, 'platform.db')
+DB_PATH = os.getenv('DB_PATH', '/tmp/ai_platform.db')
 
 def get_connection():
     os.makedirs(os.path.dirname(DB_PATH), exist_ok=True)
