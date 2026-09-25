@@ -391,10 +391,13 @@ whatsapp_sessions = {}
 async def whatsapp_webhook(request: Request):
     try:
         body = await request.json()
-    except Exception:
+    except Exception as e:
+        print("JSON parse error in webhook:", e)
         return {"status": "error", "message": "Invalid JSON"}
         
     type_webhook = body.get("typeWebhook")
+    print(f"--> Received Webhook event: {type_webhook}")
+    
     if type_webhook == "incomingMessageReceived":
         message_data = body.get("messageData", {})
         type_message = message_data.get("typeMessage")
@@ -403,8 +406,11 @@ async def whatsapp_webhook(request: Request):
             text = message_data.get("textMessageData", {}).get("textMessage", "").strip()
             sender_data = body.get("senderData", {})
             chat_id = sender_data.get("chatId")
+            sender_name = sender_data.get("senderName", "")
             
-            if not chat_id or "@c.us" not in chat_id:
+            print(f"📩 Incoming WhatsApp Text from {chat_id} ({sender_name}): '{text}'")
+            
+            if not chat_id:
                 return {"status": "ignored"}
                 
             user_state = whatsapp_sessions.get(chat_id)
@@ -415,15 +421,38 @@ async def whatsapp_webhook(request: Request):
             if res.get("deal_closed"):
                 reply_text += "\n\n🔗 رابط منصتنا لتأكيد طلبك والدفع الآمن:\nhttps://ai-services-platform.onrender.com"
                 
-            id_instance = os.getenv("GREEN_API_ID", "")
-            api_token = os.getenv("GREEN_API_TOKEN", "")
+            id_instance = os.getenv("GREEN_API_ID", "").strip()
+            api_token = os.getenv("GREEN_API_TOKEN", "").strip()
             
-            if id_instance and api_token:
-                import requests
-                send_url = f"https://api.green-api.com/waInstance{id_instance}/sendMessage/{api_token}"
+            print(f"🔑 Using GREEN_API_ID: '{id_instance}', Token present: {bool(api_token)}")
+            
+            if not id_instance or not api_token:
+                print("❌ ERROR: GREEN_API_ID or GREEN_API_TOKEN is missing in Environment Variables!")
+                return {"status": "error", "message": "Missing Green API credentials"}
+                
+            import requests
+            
+            # Green API host can be cluster-specific (e.g. 7107.api.green-api.com) or default api.green-api.com
+            host_prefix = id_instance[:4] if len(id_instance) >= 4 else "api"
+            endpoints = [
+                f"https://{host_prefix}.api.green-api.com/waInstance{id_instance}/sendMessage/{api_token}",
+                f"https://api.green-api.com/waInstance{id_instance}/sendMessage/{api_token}"
+            ]
+            
+            sent_success = False
+            for send_url in endpoints:
                 try:
-                    requests.post(send_url, json={"chatId": chat_id, "message": reply_text}, timeout=10)
-                except Exception as e:
-                    print("Error sending WhatsApp message:", e)
+                    payload = {"chatId": chat_id, "message": reply_text}
+                    print(f"🚀 Sending reply to {send_url} ...")
+                    r = requests.post(send_url, json=payload, timeout=12)
+                    print(f"📬 Green-API Response [{r.status_code}]: {r.text}")
+                    if r.status_code == 200:
+                        sent_success = True
+                        break
+                except Exception as ex:
+                    print(f"⚠️ Failed calling {send_url}: {ex}")
                     
+            if not sent_success:
+                print("❌ All Green-API send attempts failed.")
+                
     return {"status": "ok"}
