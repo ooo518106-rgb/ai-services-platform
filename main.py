@@ -402,17 +402,26 @@ async def whatsapp_webhook(request: Request):
         message_data = body.get("messageData", {})
         type_message = message_data.get("typeMessage")
         
+        # Extract text from textMessage, extendedTextMessage or others
+        text = ""
         if type_message == "textMessage":
             text = message_data.get("textMessageData", {}).get("textMessage", "").strip()
-            sender_data = body.get("senderData", {})
-            chat_id = sender_data.get("chatId")
-            sender_name = sender_data.get("senderName", "")
+        elif type_message == "extendedTextMessage":
+            text = message_data.get("extendedTextMessageData", {}).get("text", "").strip()
+        else:
+            text = (
+                message_data.get("textMessageData", {}).get("textMessage") or
+                message_data.get("extendedTextMessageData", {}).get("text") or
+                ""
+            ).strip()
             
-            print(f"📩 Incoming WhatsApp Text from {chat_id} ({sender_name}): '{text}'")
-            
-            if not chat_id:
-                return {"status": "ignored"}
-                
+        sender_data = body.get("senderData", {})
+        chat_id = sender_data.get("chatId")
+        sender_name = sender_data.get("senderName", "")
+        
+        print(f"📩 WhatsApp Message: type={type_message} | chat_id={chat_id} | text='{text}'")
+        
+        if text and chat_id:
             user_state = whatsapp_sessions.get(chat_id)
             res = process_sales_chat(text, user_state)
             whatsapp_sessions[chat_id] = res["state"]
@@ -432,7 +441,6 @@ async def whatsapp_webhook(request: Request):
                 
             import requests
             
-            # Green API host can be cluster-specific (e.g. 7107.api.green-api.com) or default api.green-api.com
             host_prefix = id_instance[:4] if len(id_instance) >= 4 else "api"
             endpoints = [
                 f"https://{host_prefix}.api.green-api.com/waInstance{id_instance}/sendMessage/{api_token}",
